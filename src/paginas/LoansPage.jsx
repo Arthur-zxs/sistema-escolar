@@ -2,14 +2,13 @@ import LoanTable from "../componentes/emprestimos/LoanTable";
 
 export default function LoansPage({ loans, onReturn, canReturn }) {
   const activeLoans = loans.filter((loan) => ["Em uso", "Atrasado"].includes(loan.status));
-  const pendingRequests = loans.filter((loan) => loan.status === "Pendente").length;
-  const rejectedRequests = loans.filter((loan) => loan.status === "Recusado").length;
+  const scheduledLoans = loans.filter((loan) => loan.status === "Pendente").length;
 
   return (
     <div className="page-content">
       <div className="page-intro">
         <div>
-          <span className="eyebrow">CONTROLE DE USO</span>
+          <span className="eyebrow">PASSO 3 · ACOMPANHE SEUS APARELHOS</span>
           <h2>Empréstimos</h2>
           <p>
             Consulte os aparelhos em uso e acompanhe os prazos de devolução.
@@ -18,7 +17,7 @@ export default function LoansPage({ loans, onReturn, canReturn }) {
         <div className="catalog-count">
           <strong>{String(activeLoans.length).padStart(2, "0")}</strong>
           <span>
-            {pendingRequests} pendente(s) · {rejectedRequests} recusada(s)
+            {scheduledLoans} agendado(s)
           </span>
         </div>
       </div>

@@ -72,7 +72,7 @@ before(async () => {
     SMTP_USER: "",
     SMTP_PASSWORD: "",
     SMTP_FROM: "",
-    EXPOSE_EMAIL_VERIFICATION_CODE: "true",
+    EXPOSE_PASSWORD_RESET_CODE: "true",
     BOOTSTRAP_ADMIN_RM: "1234567",
     BOOTSTRAP_ADMIN_NAME: "Administração de teste",
     BOOTSTRAP_ADMIN_EMAIL: "admin@senaisp.edu.br",
@@ -102,6 +102,10 @@ after(async () => {
 });
 
 test("authenticates, enforces admin permissions and persists lending workflows", async () => {
+  const health = await api("/api/health");
+  assert.equal(health.response.status, 200);
+  assert.deepEqual(health.result, { status: "ok" });
+
   const unauthenticated = await api("/api/devices");
   assert.equal(unauthenticated.response.status, 401);
 
@@ -116,39 +120,16 @@ test("authenticates, enforces admin permissions and persists lending workflows",
     },
   });
   assert.equal(adminRoleRequest.response.status, 201);
-  assert.match(adminRoleRequest.result.message, /Confirme o código/);
+  assert.match(adminRoleRequest.result.message, /já pode entrar/);
 
   const pendingUserLogin = await api("/api/auth/login", {
     method: "POST",
     body: { rm: "7654321", password: "SenhaDiretoria#2026" },
   });
-  assert.equal(pendingUserLogin.response.status, 403);
-  const invalidEmailCode = await api("/api/auth/verify-email", {
-    method: "POST",
-    body: { email: "user-admin@senaisp.edu.br", code: "000000" },
-  });
-  assert.equal(invalidEmailCode.response.status, 400);
-  const resendEmailCode = await api("/api/auth/resend-verification", {
-    method: "POST",
-    body: { email: "user-admin@senaisp.edu.br" },
-  });
-  assert.equal(resendEmailCode.response.status, 200);
-  const verifiedDirectorEmail = await api("/api/auth/verify-email", {
-    method: "POST",
-    body: {
-      email: "user-admin@senaisp.edu.br",
-      code: resendEmailCode.result.verificationCode,
-    },
-  });
-  assert.equal(verifiedDirectorEmail.response.status, 200);
-  const verifiedDirectorLogin = await api("/api/auth/login", {
-    method: "POST",
-    body: { rm: "7654321", password: "SenhaDiretoria#2026" },
-  });
-  assert.equal(verifiedDirectorLogin.response.status, 200);
-  assert.equal(verifiedDirectorLogin.result.user.funcao, "Diretoria");
-  assert.equal(verifiedDirectorLogin.result.user.adminApprovalPending, true);
-  const pendingUserCookie = verifiedDirectorLogin.response.headers.get("set-cookie").split(";")[0];
+  assert.equal(pendingUserLogin.response.status, 200);
+  assert.equal(pendingUserLogin.result.user.funcao, "Diretoria");
+  assert.equal(pendingUserLogin.result.user.adminApprovalPending, true);
+  const pendingUserCookie = pendingUserLogin.response.headers.get("set-cookie").split(";")[0];
   const pendingAdminAttempt = await api("/api/admin/users", { cookie: pendingUserCookie });
   assert.equal(pendingAdminAttempt.response.status, 403);
 
@@ -176,19 +157,12 @@ test("authenticates, enforces admin permissions and persists lending workflows",
     body: validRegistration,
   });
   assert.equal(validPublicRegistration.response.status, 201);
-  const unverifiedLogin = await api("/api/auth/login", {
+  const publicUserLogin = await api("/api/auth/login", {
     method: "POST",
     body: { rm: "1111111", password: validRegistration.password },
   });
-  assert.equal(unverifiedLogin.response.status, 403);
-  const verifiedPublicEmail = await api("/api/auth/verify-email", {
-    method: "POST",
-    body: {
-      email: validRegistration.email,
-      code: validPublicRegistration.result.verificationCode,
-    },
-  });
-  assert.equal(verifiedPublicEmail.response.status, 200);
+  assert.equal(publicUserLogin.response.status, 200);
+  assert.equal(publicUserLogin.result.user.funcao, "Professor(a)");
 
   const adminLogin = await api("/api/auth/login", {
     method: "POST",
@@ -209,6 +183,43 @@ test("authenticates, enforces admin permissions and persists lending workflows",
   const approvedAdminAttempt = await api("/api/admin/users", { cookie: pendingUserCookie });
   assert.equal(approvedAdminAttempt.response.status, 200);
 
+  const invalidDevice = await api("/api/admin/devices", {
+    method: "POST",
+    cookie: adminCookie,
+    body: {
+      name: "Notebook inválido",
+      type: "Notebook",
+      brand: "Teste",
+      total: true,
+      location: "LMT",
+    },
+  });
+  assert.equal(invalidDevice.response.status, 400);
+  const createdDevice = await api("/api/admin/devices", {
+    method: "POST",
+    cookie: adminCookie,
+    body: {
+      name: "Notebook de teste",
+      type: "Notebook",
+      brand: "Teste",
+      total: 1,
+      location: "LMT",
+    },
+  });
+  assert.equal(createdDevice.response.status, 201);
+  const invalidDeviceUpdate = await api(`/api/admin/devices/${createdDevice.result.id}`, {
+    method: "PUT",
+    cookie: adminCookie,
+    body: {
+      name: "Notebook de teste",
+      type: "Notebook",
+      brand: "Teste",
+      total: 0,
+      location: "LMT",
+    },
+  });
+  assert.equal(invalidDeviceUpdate.response.status, 400);
+
   const secretaryRequest = await api("/api/auth/register", {
     method: "POST",
     body: {
@@ -220,14 +231,12 @@ test("authenticates, enforces admin permissions and persists lending workflows",
     },
   });
   assert.equal(secretaryRequest.response.status, 201);
-  const verifiedSecretaryEmail = await api("/api/auth/verify-email", {
+  const secretaryLogin = await api("/api/auth/login", {
     method: "POST",
-    body: {
-      email: "solicitante@senaisp.edu.br",
-      code: secretaryRequest.result.verificationCode,
-    },
+    body: { rm: "6543210", password: "SenhaSecretaria#2026" },
   });
-  assert.equal(verifiedSecretaryEmail.response.status, 200);
+  assert.equal(secretaryLogin.response.status, 200);
+  assert.equal(secretaryLogin.result.user.adminApprovalPending, true);
   const pendingUsersAfterSecretaryRequest = await api("/api/admin/users", {
     cookie: adminCookie,
   });
@@ -384,6 +393,39 @@ test("authenticates, enforces admin permissions and persists lending workflows",
   assert.equal(newPasswordLogin.response.status, 200);
   staffCookie = newPasswordLogin.response.headers.get("set-cookie").split(";")[0];
 
+  const passwordResetRequest = await api("/api/auth/password-reset/request", {
+    method: "POST",
+    body: { rm: "2222222" },
+  });
+  assert.equal(passwordResetRequest.response.status, 200);
+  assert.ok(passwordResetRequest.result.resetCode);
+  const invalidResetCode = await api("/api/auth/password-reset/confirm", {
+    method: "POST",
+    body: {
+      rm: "2222222",
+      code: "000000",
+      newPassword: "SenhaRecuperada#2026",
+    },
+  });
+  assert.equal(invalidResetCode.response.status, 400);
+  const passwordReset = await api("/api/auth/password-reset/confirm", {
+    method: "POST",
+    body: {
+      rm: "2222222",
+      code: passwordResetRequest.result.resetCode,
+      newPassword: "SenhaRecuperada#2026",
+    },
+  });
+  assert.equal(passwordReset.response.status, 200);
+  const resetInvalidatedSession = await api("/api/devices", { cookie: staffCookie });
+  assert.equal(resetInvalidatedSession.response.status, 401);
+  const resetPasswordLogin = await api("/api/auth/login", {
+    method: "POST",
+    body: { rm: "2222222", password: "SenhaRecuperada#2026" },
+  });
+  assert.equal(resetPasswordLogin.response.status, 200);
+  staffCookie = resetPasswordLogin.response.headers.get("set-cookie").split(";")[0];
+
   const forbiddenAdminAction = await api("/api/admin/devices", {
     method: "POST",
     cookie: staffCookie,
@@ -458,6 +500,19 @@ test("authenticates, enforces admin permissions and persists lending workflows",
     },
   });
   assert.equal(invalidCalendarDate.response.status, 400);
+
+  const invalidBooleanLoanData = await api("/api/loans", {
+    method: "POST",
+    cookie: staffCookie,
+    body: {
+      deviceId: true,
+      responsible: "Funcionário teste",
+      qty: true,
+      roomId: salaAulaId,
+      returnAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    },
+  });
+  assert.equal(invalidBooleanLoanData.response.status, 400);
 
   const requestedReturnAt = new Date(Date.now() + 60 * 60 * 1000);
   const loanRequest = await api("/api/loans", {
@@ -579,6 +634,77 @@ test("authenticates, enforces admin permissions and persists lending workflows",
     cookie: adminCookie,
   });
   assert.equal(adminReturn.response.status, 200);
+});
+
+test("preserves unrecognized legacy device locations across server startup", async () => {
+  serverProcess.kill("SIGTERM");
+  await once(serverProcess, "exit");
+
+  const testDatabase = new Database(testDatabasePath);
+  testDatabase.prepare("UPDATE devices SET location = ? WHERE id = ?").run("Lab. 01", 2);
+  testDatabase.prepare("UPDATE users SET email_verified = 0 WHERE rm = ?").run("2222222");
+  testDatabase.exec(`
+    CREATE TABLE email_verifications (
+      user_id INTEGER PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  testDatabase.close();
+
+  await startServer();
+  const migratedDatabase = new Database(testDatabasePath, { readonly: true });
+  const device = migratedDatabase.prepare("SELECT location FROM devices WHERE id = ?").get(2);
+  const verified = migratedDatabase.prepare(
+    "SELECT email_verified FROM users WHERE rm = ?",
+  ).get("2222222");
+  const legacyVerificationTable = migratedDatabase.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_verifications'
+  `).get();
+  migratedDatabase.close();
+  assert.equal(device.location, "Lab. 01");
+  assert.equal(verified.email_verified, 1);
+  assert.equal(legacyVerificationTable, undefined);
+
+  const blockedLegacyLoan = await api("/api/loans", {
+    method: "POST",
+    cookie: staffCookie,
+    body: {
+      deviceId: 2,
+      responsible: "Funcionário teste",
+      qty: 1,
+      roomId: "lab-04",
+      returnAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    },
+  });
+  assert.equal(blockedLegacyLoan.response.status, 409);
+
+  const updateLegacyDevice = await api("/api/admin/devices/2", {
+    method: "PUT",
+    cookie: adminCookie,
+    body: {
+      name: "Lenovo ThinkPad E14",
+      type: "Notebook",
+      brand: "Lenovo",
+      total: 10,
+      location: "Lab. 01",
+    },
+  });
+  assert.equal(updateLegacyDevice.response.status, 200, JSON.stringify(updateLegacyDevice.result));
+
+  const classifyLegacyDevice = await api("/api/admin/devices/2", {
+    method: "PUT",
+    cookie: adminCookie,
+    body: {
+      name: "Lenovo ThinkPad E14",
+      type: "Notebook",
+      brand: "Lenovo",
+      total: 10,
+      location: "LMT",
+    },
+  });
+  assert.equal(classifyLegacyDevice.response.status, 200);
 });
 
 test("developer admin access accepts only the configured 4-digit RM from loopback", async () => {

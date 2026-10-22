@@ -1,4 +1,4 @@
-export default function exportarEmprestimos(loans, filename = "emprestimos-sesi.csv") {
+export default function exportarEmprestimos(loans, filename = "emprestimos-agenda-lmt.csv") {
   const linhas = [
     ["Aparelho", "Responsável", "Quantidade", "Sala", "Função", "Retirada", "Devolução prevista", "Status"],
     ...loans.map((loan) => [

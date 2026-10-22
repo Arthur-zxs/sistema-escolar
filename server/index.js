@@ -1,4 +1,4 @@
-import { randomBytes, randomInt, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,19 +24,22 @@ const smtpPort = Number(process.env.SMTP_PORT);
 const smtpUser = process.env.SMTP_USER?.trim();
 const smtpPassword = process.env.SMTP_PASSWORD;
 const smtpFrom = process.env.SMTP_FROM?.trim();
-const exposeVerificationCode =
+const exposePasswordResetCode =
   !production &&
   !smtpHost &&
   (
-    process.env.EXPOSE_EMAIL_VERIFICATION_CODE === "true" ||
+    process.env.EXPOSE_PASSWORD_RESET_CODE === "true" ||
     host === "127.0.0.1" ||
     host === "::1"
   );
 const developerAccessEnabled =
   !production &&
   /^\d{4}$/.test(process.env.DEV_ADMIN_RM || "");
-if (production && (!smtpHost || !Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535 || !smtpFrom)) {
-  throw new Error("SMTP_HOST, SMTP_PORT and SMTP_FROM must be configured in production.");
+if (
+  (production || smtpHost) &&
+  (!smtpHost || !Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535 || !smtpFrom)
+) {
+  throw new Error("Production requires SMTP_HOST, a valid SMTP_PORT and SMTP_FROM; configure all three together.");
 }
 if (Boolean(smtpUser) !== Boolean(smtpPassword)) {
   throw new Error("SMTP_USER and SMTP_PASSWORD must be configured together.");
@@ -54,6 +57,20 @@ function isValidPassword(password) {
   return typeof password === "string" &&
     password.length >= 12 &&
     Buffer.byteLength(password, "utf8") <= 72;
+}
+
+function isValidAccount({ nome, email, funcao, rm, password }) {
+  return typeof nome === "string" &&
+    Boolean(nome.trim()) &&
+    nome.trim().length <= 120 &&
+    typeof email === "string" &&
+    Boolean(email.trim()) &&
+    email.trim().length <= 254 &&
+    emailPattern.test(email.trim()) &&
+    typeof rm === "string" &&
+    rmPattern.test(rm.trim()) &&
+    isValidPassword(password) &&
+    (publicRoles.has(funcao) || adminRoles.has(funcao));
 }
 
 function formatInSchoolTime(date, options) {
@@ -87,13 +104,13 @@ function schoolDateTime(year, month, day, hour, minute) {
   return new Date(utcGuess - (representedUtc - utcGuess));
 }
 
-async function sendVerificationEmail(email, code) {
+async function sendPasswordResetEmail(email, code) {
   if (!mailer) return false;
   await mailer.sendMail({
     from: smtpFrom,
     to: email,
-    subject: "Confirme seu e-mail - SESI Cerquilho",
-    text: `Seu código para confirmar o e-mail no sistema de empréstimo é ${code}. Ele expira em 15 minutos.`,
+    subject: "Recuperação de senha - Agenda LMT",
+    text: `Seu código para redefinir a senha do Agenda LMT é ${code}. Ele expira em 15 minutos.`,
   });
   return true;
 }
@@ -103,56 +120,80 @@ function isLoopbackAddress(address) {
 }
 
 function positiveId(value) {
+  if (
+    (typeof value !== "number" && typeof value !== "string") ||
+    (typeof value === "string" && !/^\d+$/.test(value.trim()))
+  ) return null;
   const id = Number(value);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
+function isValidDevice({ name, type, brand, total }) {
+  const amount = positiveId(total);
+  return typeof name === "string" &&
+    Boolean(name.trim()) &&
+    name.trim().length <= 120 &&
+    ["Notebook", "Celular"].includes(type) &&
+    typeof brand === "string" &&
+    Boolean(brand.trim()) &&
+    brand.trim().length <= 120 &&
+    amount !== null &&
+    amount <= 10_000;
+}
+
+function isValidClassroom({ name, kind, block }) {
+  return typeof name === "string" &&
+    Boolean(name.trim()) &&
+    name.trim().length <= 80 &&
+    kind === "Sala de aula" &&
+    ["A", "B"].includes(block);
+}
+
 app.disable("x-powered-by");
 app.use(express.json({ limit: "300kb" }));
-const authenticationLimiter = rateLimit({
-  windowMs: 30 * 1000,
-  limit: 10,
-  skipSuccessfulRequests: true,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { error: "Muitas tentativas. Aguarde 30 segundos e tente novamente." },
-});
-const registrationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { error: "Muitas tentativas de cadastro. Aguarde alguns minutos e tente novamente." },
-});
-const developerAuthenticationLimiter = rateLimit({
-  windowMs: 30 * 1000,
-  limit: 10,
-  skipSuccessfulRequests: true,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { error: "Muitas tentativas. Aguarde 30 segundos e tente novamente." },
-});
-const passwordChangeLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." },
-});
-const emailVerificationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." },
-});
-const verificationResendLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 5,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { error: "Muitos pedidos de código. Aguarde alguns minutos e tente novamente." },
-});
+function createRateLimiter(windowMs, limit, message, skipSuccessfulRequests = false) {
+  return rateLimit({
+    windowMs,
+    limit,
+    ...(skipSuccessfulRequests ? { skipSuccessfulRequests: true } : {}),
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: message },
+  });
+}
+
+const authenticationLimiter = createRateLimiter(
+  30 * 1000,
+  10,
+  "Muitas tentativas. Aguarde 30 segundos e tente novamente.",
+  true,
+);
+const registrationLimiter = createRateLimiter(
+  15 * 60 * 1000,
+  10,
+  "Muitas tentativas de cadastro. Aguarde alguns minutos e tente novamente.",
+);
+const developerAuthenticationLimiter = createRateLimiter(
+  30 * 1000,
+  10,
+  "Muitas tentativas. Aguarde 30 segundos e tente novamente.",
+  true,
+);
+const passwordChangeLimiter = createRateLimiter(
+  15 * 60 * 1000,
+  10,
+  "Muitas tentativas. Aguarde alguns minutos e tente novamente.",
+);
+const passwordResetRequestLimiter = createRateLimiter(
+  15 * 60 * 1000,
+  5,
+  "Muitos pedidos de recuperação. Aguarde alguns minutos e tente novamente.",
+);
+const passwordResetLimiter = createRateLimiter(
+  15 * 60 * 1000,
+  10,
+  "Muitas tentativas de recuperação. Aguarde alguns minutos e tente novamente.",
+);
 app.use((request, response, next) => {
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "same-origin");
@@ -344,18 +385,7 @@ app.post("/api/auth/register", registrationLimiter, async (request, response) =>
   }
 
   const { nome, email, funcao, rm, password } = request.body || {};
-  if (
-    typeof nome !== "string" ||
-    typeof email !== "string" ||
-    typeof rm !== "string" ||
-    typeof password !== "string" ||
-    !nome.trim() || nome.trim().length > 120 ||
-    !email.trim() || email.trim().length > 254 ||
-    !emailPattern.test(email.trim()) ||
-    !rmPattern.test(rm.trim()) ||
-    !isValidPassword(password) ||
-    (!publicRoles.has(funcao) && !adminRoles.has(funcao))
-  ) {
+  if (!isValidAccount({ nome, email, funcao, rm, password })) {
     return response.status(400).json({
       error: "Informe nome, e-mail @senaisp.edu.br, RM com 7 dígitos, função válida e senha com pelo menos 12 caracteres.",
     });
@@ -364,42 +394,23 @@ app.post("/api/auth/register", registrationLimiter, async (request, response) =>
   try {
     const passwordHash = await bcrypt.hash(password, 12);
     const normalizedEmail = email.trim().toLowerCase();
-    const code = String(randomInt(100000, 1000000));
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const createPendingUser = database.transaction(() => {
-      const result = database.prepare(`
-        INSERT INTO users (
-          rm, name, email, role, password_hash, requested_admin_role,
-          email_verified, password_updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-      `).run(
-        rm.trim(),
-        nome.trim(),
-        normalizedEmail,
-        adminRoles.has(funcao) ? "Outro" : funcao,
-        passwordHash,
-        adminRoles.has(funcao) ? funcao : null,
-        new Date().toISOString(),
-      );
-      database.prepare(`
-        INSERT INTO email_verifications (user_id, token_hash, expires_at)
-        VALUES (?, ?, ?)
-      `).run(Number(result.lastInsertRowid), hashToken(code), expiresAt);
-    });
-    createPendingUser();
-    try {
-      await sendVerificationEmail(normalizedEmail, code);
-    } catch (error) {
-      console.error("Unable to send email verification message.", error);
-      return response.status(503).json({
-        error: "O cadastro foi criado, mas não foi possível enviar o código. Tente solicitar outro código.",
-      });
-    }
+    database.prepare(`
+      INSERT INTO users (
+        rm, name, email, role, password_hash, requested_admin_role, password_updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      rm.trim(),
+      nome.trim(),
+      normalizedEmail,
+      adminRoles.has(funcao) ? "Outro" : funcao,
+      passwordHash,
+      adminRoles.has(funcao) ? funcao : null,
+      new Date().toISOString(),
+    );
     response.status(201).json({
-      message: "Cadastro iniciado. Confirme o código enviado ao e-mail institucional para liberar o acesso.",
+      message: "Cadastro concluído. Você já pode entrar com seu RM e senha.",
       email: normalizedEmail,
-      ...(exposeVerificationCode && !mailer ? { verificationCode: code } : {}),
     });
   } catch (error) {
     if (error.code === "SQLITE_CONSTRAINT_UNIQUE") {
@@ -409,82 +420,6 @@ app.post("/api/auth/register", registrationLimiter, async (request, response) =>
   }
 });
 
-app.post("/api/auth/verify-email", emailVerificationLimiter, (request, response) => {
-  const { email, code } = request.body || {};
-  if (
-    typeof email !== "string" ||
-    typeof code !== "string" ||
-    !emailPattern.test(email.trim()) ||
-    !/^\d{6}$/.test(code)
-  ) {
-    return response.status(400).json({ error: "Informe o e-mail institucional e o código de 6 dígitos." });
-  }
-  const user = database.prepare(`
-    SELECT users.id, users.email_verified, email_verifications.token_hash,
-      email_verifications.expires_at, email_verifications.attempts
-    FROM users
-    LEFT JOIN email_verifications ON email_verifications.user_id = users.id
-    WHERE users.email = ? COLLATE NOCASE AND users.is_dev = 0
-  `).get(email.trim());
-  if (!user || user.email_verified) {
-    return response.status(400).json({ error: "Código inválido ou expirado. Solicite um novo código." });
-  }
-  if (!user.token_hash || Date.parse(user.expires_at) <= Date.now() || user.attempts >= 5) {
-    database.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(user.id);
-    return response.status(400).json({ error: "Código inválido ou expirado. Solicite um novo código." });
-  }
-  const providedTokenHash = Buffer.from(hashToken(code), "hex");
-  const storedTokenHash = Buffer.from(user.token_hash, "hex");
-  if (
-    providedTokenHash.length !== storedTokenHash.length ||
-    !timingSafeEqual(providedTokenHash, storedTokenHash)
-  ) {
-    database.prepare("UPDATE email_verifications SET attempts = attempts + 1 WHERE user_id = ?")
-      .run(user.id);
-    return response.status(400).json({ error: "Código inválido ou expirado. Solicite um novo código." });
-  }
-  const verifyEmail = database.transaction(() => {
-    database.prepare("UPDATE users SET email_verified = 1 WHERE id = ?").run(user.id);
-    database.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(user.id);
-  });
-  verifyEmail();
-  response.json({ message: "E-mail confirmado. Agora você já pode entrar." });
-});
-
-app.post("/api/auth/resend-verification", verificationResendLimiter, async (request, response) => {
-  const email = request.body?.email;
-  if (typeof email !== "string" || !emailPattern.test(email.trim())) {
-    return response.status(400).json({ error: "Informe um e-mail institucional válido." });
-  }
-  const user = database.prepare(`
-    SELECT id, email, email_verified FROM users
-    WHERE email = ? COLLATE NOCASE AND is_dev = 0
-  `).get(email.trim());
-  if (!user || user.email_verified) {
-    return response.json({ message: "Se houver um cadastro pendente, um novo código será enviado." });
-  }
-  const code = String(randomInt(100000, 1000000));
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  database.prepare(`
-    INSERT INTO email_verifications (user_id, token_hash, expires_at, attempts)
-    VALUES (?, ?, ?, 0)
-    ON CONFLICT(user_id) DO UPDATE SET
-      token_hash = excluded.token_hash,
-      expires_at = excluded.expires_at,
-      attempts = 0
-  `).run(user.id, hashToken(code), expiresAt);
-  try {
-    await sendVerificationEmail(user.email, code);
-  } catch (error) {
-    console.error("Unable to resend email verification message.", error);
-    return response.status(503).json({ error: "Não foi possível enviar o código. Tente novamente mais tarde." });
-  }
-  response.json({
-    message: "Se houver um cadastro pendente, um novo código será enviado.",
-    ...(exposeVerificationCode && !mailer ? { verificationCode: code } : {}),
-  });
-});
-
 app.post("/api/auth/login", authenticationLimiter, async (request, response) => {
   const { rm, password } = request.body || {};
   if (typeof rm !== "string" || typeof password !== "string" || Buffer.byteLength(password, "utf8") > 72) {
@@ -492,15 +427,12 @@ app.post("/api/auth/login", authenticationLimiter, async (request, response) => 
   }
   const user = database.prepare(`
     SELECT id, rm, name, email, role, active, is_dev, requested_admin_role,
-      avatar, password_hash, email_verified, password_updated_at
+      avatar, password_hash, password_updated_at
     FROM users WHERE rm = ? COLLATE NOCASE AND is_dev = 0
   `).get(rm.trim());
 
   if (!user || !user.active || !(await bcrypt.compare(password, user.password_hash))) {
     return response.status(401).json({ error: "RM ou senha incorretos." });
-  }
-  if (!user.email_verified) {
-    return response.status(403).json({ error: "Confirme seu e-mail institucional antes de entrar." });
   }
   if (!user.password_updated_at) {
     return response.status(428).json({
@@ -562,6 +494,99 @@ app.post("/api/auth/change-password", passwordChangeLimiter, async (request, res
   database.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
   createActivity(user.id, "Senha alterada");
   response.json({ message: "Senha alterada com sucesso." });
+});
+
+app.post("/api/auth/password-reset/request", passwordResetRequestLimiter, async (request, response) => {
+  const { rm } = request.body || {};
+  if (typeof rm !== "string" || !rmPattern.test(rm.trim())) {
+    return response.status(400).json({ error: "Informe um RM válido com 7 dígitos." });
+  }
+  const genericMessage =
+    "Se houver uma conta ativa associada a esse RM, enviaremos um código ao e-mail institucional cadastrado.";
+  const user = database.prepare(`
+    SELECT id, email FROM users
+    WHERE rm = ? COLLATE NOCASE AND active = 1 AND is_dev = 0
+  `).get(rm.trim());
+  if (!user) return response.json({ message: genericMessage });
+
+  const code = String(randomInt(100000, 1000000));
+  const codeHash = await bcrypt.hash(code, 12);
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  database.prepare(`
+    INSERT INTO password_resets (user_id, token_hash, expires_at, attempts)
+    VALUES (?, ?, ?, 0)
+    ON CONFLICT(user_id) DO UPDATE SET
+      token_hash = excluded.token_hash,
+      expires_at = excluded.expires_at,
+      attempts = 0
+  `).run(user.id, codeHash, expiresAt);
+  try {
+    await sendPasswordResetEmail(user.email, code);
+  } catch (error) {
+    database.prepare("DELETE FROM password_resets WHERE user_id = ? AND token_hash = ?")
+      .run(user.id, codeHash);
+    console.error("Unable to send password reset message.", error);
+    return response.status(503).json({
+      error: "Não foi possível enviar o código. Tente novamente mais tarde.",
+    });
+  }
+  response.json({
+    message: genericMessage,
+    ...(exposePasswordResetCode && !mailer ? { resetCode: code } : {}),
+  });
+});
+
+app.post("/api/auth/password-reset/confirm", passwordResetLimiter, async (request, response) => {
+  const { rm, code, newPassword } = request.body || {};
+  if (
+    typeof rm !== "string" || !rmPattern.test(rm.trim()) ||
+    typeof code !== "string" || !/^\d{6}$/.test(code) ||
+    typeof newPassword !== "string" || !isValidPassword(newPassword)
+  ) {
+    return response.status(400).json({
+      error: "Informe RM, código de 6 dígitos e senha com pelo menos 12 caracteres.",
+    });
+  }
+  const reset = database.prepare(`
+    SELECT password_resets.user_id, password_resets.token_hash,
+      password_resets.expires_at, password_resets.attempts
+    FROM password_resets
+    JOIN users ON users.id = password_resets.user_id
+    WHERE users.rm = ? COLLATE NOCASE AND users.active = 1 AND users.is_dev = 0
+  `).get(rm.trim());
+  const invalidCode = () => response.status(400).json({
+    error: "Código inválido ou expirado. Solicite um novo código.",
+  });
+  if (!reset) return invalidCode();
+  if (Date.parse(reset.expires_at) <= Date.now() || reset.attempts >= 5) {
+    database.prepare("DELETE FROM password_resets WHERE user_id = ?").run(reset.user_id);
+    return invalidCode();
+  }
+  if (!(await bcrypt.compare(code, reset.token_hash))) {
+    database.prepare("UPDATE password_resets SET attempts = attempts + 1 WHERE user_id = ?")
+      .run(reset.user_id);
+    return invalidCode();
+  }
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  const resetPassword = database.transaction(() => {
+    const currentReset = database.prepare(`
+      SELECT token_hash, expires_at, attempts FROM password_resets WHERE user_id = ?
+    `).get(reset.user_id);
+    if (
+      !currentReset ||
+      currentReset.token_hash !== reset.token_hash ||
+      Date.parse(currentReset.expires_at) <= Date.now() ||
+      currentReset.attempts >= 5
+    ) return false;
+    database.prepare("UPDATE users SET password_hash = ?, password_updated_at = ? WHERE id = ?")
+      .run(passwordHash, new Date().toISOString(), reset.user_id);
+    database.prepare("DELETE FROM password_resets WHERE user_id = ?").run(reset.user_id);
+    database.prepare("DELETE FROM sessions WHERE user_id = ?").run(reset.user_id);
+    createActivity(reset.user_id, "Senha redefinida por recuperação de conta");
+    return true;
+  });
+  if (!resetPassword()) return invalidCode();
+  response.json({ message: "Senha redefinida com sucesso. Entre com sua nova senha." });
 });
 
 app.put("/api/auth/profile", requireAuth, (request, response) => {
@@ -693,13 +718,14 @@ app.delete("/api/admin/history", requireAuth, requireAdmin, (request, response) 
 
 app.post("/api/loans", requireAuth, (request, response) => {
   const { deviceId, responsible, qty, roomId, returnAt } = request.body || {};
+  const parsedDeviceId = positiveId(deviceId);
+  const parsedQuantity = positiveId(qty);
   if (
-    !Number.isInteger(Number(deviceId)) ||
+    parsedDeviceId === null ||
     typeof responsible !== "string" ||
     !responsible.trim() ||
-    !Number.isSafeInteger(Number(qty)) ||
-    Number(qty) < 1 ||
-    Number(qty) > 10_000 ||
+    parsedQuantity === null ||
+    parsedQuantity > 10_000 ||
     responsible.trim().length > 120 ||
     typeof roomId !== "string" ||
     typeof returnAt !== "string" ||
@@ -721,9 +747,14 @@ app.post("/api/loans", requireAuth, (request, response) => {
   if (dueAt.getTime() <= Date.now()) {
     return response.status(400).json({ error: "A data e hora de devolução devem ser futuras." });
   }
-  const device = database.prepare("SELECT * FROM devices WHERE id = ?").get(Number(deviceId));
+  const device = database.prepare("SELECT * FROM devices WHERE id = ?").get(parsedDeviceId);
   const room = database.prepare("SELECT * FROM rooms WHERE id = ?").get(roomId);
   if (!device || !room) return response.status(404).json({ error: "Aparelho ou sala não encontrados." });
+  if (!["LMT", "Maker"].includes(device.location)) {
+    return response.status(409).json({
+      error: "Este aparelho precisa ser associado ao acervo LMT ou Maker antes de ser emprestado.",
+    });
+  }
   if (room.kind !== "Sala de aula") {
     return response.status(400).json({ error: "Selecione uma sala de aula para utilizar o aparelho." });
   }
@@ -736,7 +767,7 @@ app.post("/api/loans", requireAuth, (request, response) => {
   });
   const createLoan = database.transaction(() => {
     const currentDevice = database.prepare("SELECT available, name FROM devices WHERE id = ?").get(device.id);
-    if (Number(qty) > currentDevice.available) {
+    if (parsedQuantity > currentDevice.available) {
       return { error: "Quantidade solicitada maior que a disponibilidade atual.", status: 409 };
     }
 
@@ -748,7 +779,7 @@ app.post("/api/loans", requireAuth, (request, response) => {
       request.user.id,
       device.id,
       responsible.trim().toUpperCase(),
-      Number(qty),
+      parsedQuantity,
       room.id,
       request.user.role,
       createdAt,
@@ -756,7 +787,7 @@ app.post("/api/loans", requireAuth, (request, response) => {
       dueAt.toISOString(),
     );
     database.prepare("UPDATE devices SET available = available - ? WHERE id = ?")
-      .run(Number(qty), device.id);
+      .run(parsedQuantity, device.id);
     createActivity(request.user.id, `Empréstimo registrado: ${currentDevice.name}`);
     return { id: Number(result.lastInsertRowid) };
   });
@@ -849,20 +880,28 @@ app.post("/api/loans/:id/return", requireAuth, (request, response) => {
 
 app.post("/api/admin/devices", requireAuth, requireAdmin, (request, response) => {
   const { name, type, brand, total, location, tone, icon } = request.body || {};
-  if (
-    typeof name !== "string" || !name.trim() ||
-    !["Notebook", "Celular"].includes(type) ||
-    typeof brand !== "string" || !brand.trim() ||
-    !Number.isSafeInteger(Number(total)) || Number(total) < 1 || Number(total) > 10_000 ||
-    !["LMT", "Maker"].includes(location)
-  ) return response.status(400).json({ error: "Dados do aparelho inválidos." });
+  if (!isValidDevice({ name, type, brand, total }) || !["LMT", "Maker"].includes(location)) {
+    return response.status(400).json({ error: "Dados do aparelho inválidos." });
+  }
   try {
-    const result = database.prepare(`
-      INSERT INTO devices (name, type, brand, total, available, tone, icon, location)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name.trim(), type, brand.trim(), Number(total), Number(total), tone || "blue", icon || "▣", location.trim());
-    createActivity(request.user.id, `Aparelho cadastrado: ${name.trim()}`);
-    response.status(201).json({ id: Number(result.lastInsertRowid) });
+    const createDevice = database.transaction(() => {
+      const result = database.prepare(`
+        INSERT INTO devices (name, type, brand, total, available, tone, icon, location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        name.trim(),
+        type,
+        brand.trim(),
+        Number(total),
+        Number(total),
+        tone || "blue",
+        icon || "▣",
+        location,
+      );
+      createActivity(request.user.id, `Aparelho cadastrado: ${name.trim()}`);
+      return Number(result.lastInsertRowid);
+    });
+    response.status(201).json({ id: createDevice() });
   } catch (error) {
     if (error.code === "SQLITE_CONSTRAINT_UNIQUE") {
       return response.status(409).json({ error: "Já existe um aparelho com esse nome." });
@@ -875,24 +914,49 @@ app.put("/api/admin/devices/:id", requireAuth, requireAdmin, (request, response)
   const id = positiveId(request.params.id);
   if (!id) return response.status(400).json({ error: "Identificador de aparelho inválido." });
   const { name, type, brand, total, location, tone, icon } = request.body || {};
-  const current = database.prepare("SELECT * FROM devices WHERE id = ?").get(id);
-  if (!current) return response.status(404).json({ error: "Aparelho não encontrado." });
-  if (
-    typeof name !== "string" || !name.trim() ||
-    !["Notebook", "Celular"].includes(type) ||
-    typeof brand !== "string" || !brand.trim() ||
-    !Number.isSafeInteger(Number(total)) || Number(total) > 10_000 ||
-    Number(total) < current.total - current.available ||
-    !["LMT", "Maker"].includes(location)
-  ) return response.status(400).json({ error: "Dados inválidos ou total menor que as unidades já emprestadas." });
+  if (!isValidDevice({ name, type, brand, total })) {
+    return response.status(400).json({ error: "Dados inválidos ou total menor que as unidades já emprestadas." });
+  }
 
   try {
-    database.prepare(`
-      UPDATE devices
-      SET name = ?, type = ?, brand = ?, total = ?, available = ?, location = ?, tone = ?, icon = ?
-      WHERE id = ?
-    `).run(name.trim(), type, brand.trim(), Number(total), Number(total) - (current.total - current.available), location.trim(), tone || current.tone, icon || current.icon, id);
-    createActivity(request.user.id, `Aparelho atualizado: ${name.trim()}`);
+    const updateDevice = database.transaction(() => {
+      const current = database.prepare(
+        "SELECT total, available, tone, icon, location FROM devices WHERE id = ?",
+      ).get(id);
+      if (!current) return { status: 404, error: "Aparelho não encontrado." };
+      if (!["LMT", "Maker", current.location].includes(location)) {
+        return {
+          status: 400,
+          error: "Selecione LMT ou Maker para classificar o local do aparelho.",
+        };
+      }
+      const borrowed = current.total - current.available;
+      if (Number(total) < borrowed) {
+        return {
+          status: 400,
+          error: "O total não pode ser menor que as unidades já emprestadas.",
+        };
+      }
+      database.prepare(`
+        UPDATE devices
+        SET name = ?, type = ?, brand = ?, total = ?, available = ?, location = ?, tone = ?, icon = ?
+        WHERE id = ?
+      `).run(
+        name.trim(),
+        type,
+        brand.trim(),
+        Number(total),
+        Number(total) - borrowed,
+        location,
+        tone || current.tone,
+        icon || current.icon,
+        id,
+      );
+      createActivity(request.user.id, `Aparelho atualizado: ${name.trim()}`);
+      return { success: true };
+    });
+    const result = updateDevice();
+    if (result.error) return response.status(result.status).json({ error: result.error });
     response.json({ message: "Aparelho atualizado." });
   } catch (error) {
     if (error.code === "SQLITE_CONSTRAINT_UNIQUE") {
@@ -905,12 +969,24 @@ app.put("/api/admin/devices/:id", requireAuth, requireAdmin, (request, response)
 app.delete("/api/admin/devices/:id", requireAuth, requireAdmin, (request, response) => {
   const id = positiveId(request.params.id);
   if (!id) return response.status(400).json({ error: "Identificador de aparelho inválido." });
-  const device = database.prepare("SELECT name FROM devices WHERE id = ?").get(id);
-  if (!device) return response.status(404).json({ error: "Aparelho não encontrado." });
-  const hasLoanHistory = database.prepare("SELECT EXISTS(SELECT 1 FROM loans WHERE device_id = ?) AS value").get(id).value === 1;
-  if (hasLoanHistory) return response.status(409).json({ error: "O aparelho possui solicitações ou empréstimos no histórico e não pode ser removido." });
-  database.prepare("DELETE FROM devices WHERE id = ?").run(id);
-  createActivity(request.user.id, `Aparelho removido: ${device.name}`);
+  const deleteDevice = database.transaction(() => {
+    const device = database.prepare("SELECT name FROM devices WHERE id = ?").get(id);
+    if (!device) return { status: 404, error: "Aparelho não encontrado." };
+    const hasLoanHistory = database.prepare(
+      "SELECT EXISTS(SELECT 1 FROM loans WHERE device_id = ?) AS value",
+    ).get(id).value === 1;
+    if (hasLoanHistory) {
+      return {
+        status: 409,
+        error: "O aparelho possui solicitações ou empréstimos no histórico e não pode ser removido.",
+      };
+    }
+    database.prepare("DELETE FROM devices WHERE id = ?").run(id);
+    createActivity(request.user.id, `Aparelho removido: ${device.name}`);
+    return { success: true };
+  });
+  const result = deleteDevice();
+  if (result.error) return response.status(result.status).json({ error: result.error });
   response.status(204).end();
 });
 
@@ -971,12 +1047,9 @@ app.put("/api/admin/users/:id/admin-role", requireAuth, requireAdmin, (request, 
 
 app.post("/api/admin/rooms", requireAuth, requireAdmin, (request, response) => {
   const { name, kind, block } = request.body || {};
-  if (
-    typeof name !== "string" || !name.trim() ||
-    name.trim().length > 80 ||
-    kind !== "Sala de aula" ||
-    !["A", "B"].includes(block)
-  ) return response.status(400).json({ error: "Informe o nome, o tipo de sala e o bloco A ou B." });
+  if (!isValidClassroom({ name, kind, block })) {
+    return response.status(400).json({ error: "Informe o nome, o tipo de sala e o bloco A ou B." });
+  }
 
   const id = randomBytes(8).toString("hex");
   try {
@@ -1003,12 +1076,9 @@ app.post("/api/admin/rooms", requireAuth, requireAdmin, (request, response) => {
 
 app.put("/api/admin/rooms/:id", requireAuth, requireAdmin, (request, response) => {
   const { name, kind, block } = request.body || {};
-  if (
-    typeof name !== "string" || !name.trim() ||
-    name.trim().length > 80 ||
-    kind !== "Sala de aula" ||
-    !["A", "B"].includes(block)
-  ) return response.status(400).json({ error: "Informe o nome, o tipo de sala e o bloco A ou B." });
+  if (!isValidClassroom({ name, kind, block })) {
+    return response.status(400).json({ error: "Informe o nome, o tipo de sala e o bloco A ou B." });
+  }
   try {
     const updateRoom = database.transaction(() => {
       const current = database.prepare("SELECT id, block FROM rooms WHERE id = ?").get(request.params.id);
@@ -1036,25 +1106,32 @@ app.put("/api/admin/rooms/:id", requireAuth, requireAdmin, (request, response) =
 });
 
 app.delete("/api/admin/rooms/:id", requireAuth, requireAdmin, (request, response) => {
-  const room = database.prepare("SELECT name FROM rooms WHERE id = ?").get(request.params.id);
-  if (!room) return response.status(404).json({ error: "Espaço não encontrado." });
-  const hasLoanHistory = database.prepare("SELECT EXISTS(SELECT 1 FROM loans WHERE room_id = ?) AS value").get(request.params.id).value === 1;
-  if (hasLoanHistory) return response.status(409).json({ error: "O espaço está associado ao histórico de empréstimos e não pode ser removido." });
-  database.prepare("DELETE FROM rooms WHERE id = ?").run(request.params.id);
-  createActivity(request.user.id, `Espaço removido: ${room.name}`);
+  const deleteRoom = database.transaction(() => {
+    const room = database.prepare("SELECT name FROM rooms WHERE id = ?").get(request.params.id);
+    if (!room) return { status: 404, error: "Espaço não encontrado." };
+    const hasLoanHistory = database.prepare(
+      "SELECT EXISTS(SELECT 1 FROM loans WHERE room_id = ?) AS value",
+    ).get(request.params.id).value === 1;
+    if (hasLoanHistory) {
+      return {
+        status: 409,
+        error: "O espaço está associado ao histórico de empréstimos e não pode ser removido.",
+      };
+    }
+    database.prepare("DELETE FROM rooms WHERE id = ?").run(request.params.id);
+    createActivity(request.user.id, `Espaço removido: ${room.name}`);
+    return { success: true };
+  });
+  const result = deleteRoom();
+  if (result.error) return response.status(result.status).json({ error: result.error });
   response.status(204).end();
 });
 
 app.post("/api/admin/users", requireAuth, requireAdmin, async (request, response) => {
   const { nome, email, funcao, rm, password } = request.body || {};
-  if (
-    typeof nome !== "string" || !nome.trim() || nome.trim().length > 120 ||
-    typeof email !== "string" || !email.trim() || email.trim().length > 254 ||
-    !emailPattern.test(email.trim()) ||
-    typeof rm !== "string" || !rmPattern.test(rm.trim()) ||
-    !isValidPassword(password) ||
-    (!adminRoles.has(funcao) && !publicRoles.has(funcao))
-  ) return response.status(400).json({ error: "Dados inválidos. Use RM de 7 dígitos, e-mail @senaisp.edu.br e senha com pelo menos 12 caracteres." });
+  if (!isValidAccount({ nome, email, funcao, rm, password })) {
+    return response.status(400).json({ error: "Dados inválidos. Use RM de 7 dígitos, e-mail @senaisp.edu.br e senha com pelo menos 12 caracteres." });
+  }
   try {
     const passwordHash = await bcrypt.hash(password, 12);
     const result = database.prepare(`
@@ -1099,6 +1176,11 @@ app.put("/api/admin/users/:id/active", requireAuth, requireAdmin, (request, resp
   response.json({ message: `Conta ${active ? "ativada" : "desativada"}.` });
 });
 
+app.get("/api/health", (_request, response) => {
+  database.prepare("SELECT 1").get();
+  response.json({ status: "ok" });
+});
+
 app.use("/api", (_request, response) => {
   response.status(404).json({ error: "Rota da API não encontrada." });
 });
@@ -1122,7 +1204,7 @@ app.use((error, _request, response, _next) => {
 });
 
 const server = app.listen(port, host, () => {
-  console.info(`SESI lending API listening on http://${host}:${port}`);
+  console.info(`Agenda LMT API listening on http://${host}:${port}`);
 });
 
 function closeServer() {

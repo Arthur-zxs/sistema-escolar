@@ -7,7 +7,6 @@ export default function Login({
   developerAccess,
   onChangePassword,
   onCreateAccount,
-  onVerifyEmail,
   mensagem,
   erro,
 }) {
@@ -47,8 +46,8 @@ export default function Login({
         <div className="brand login-brand">
           <div className="brand-mark">+</div>
           <div>
-            <strong>Sesi</strong>
-            <span>Cerquilho</span>
+            <strong>Agenda</strong>
+            <span>LMT</span>
           </div>
         </div>
 
@@ -155,10 +154,6 @@ export default function Login({
 
         <button className="create-account" type="button" onClick={onChangePassword}>
           Alterar senha
-        </button>
-
-        <button className="create-account" type="button" onClick={onVerifyEmail}>
-          Confirmar e-mail institucional
         </button>
 
         <button

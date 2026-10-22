@@ -3,8 +3,13 @@ import Badge from "../componentes/comuns/Badge";
 import Icon from "../componentes/comuns/Icon";
 import StatCard from "../componentes/comuns/StatCard";
 import exportarEmprestimos from "../utilitarios/exportarEmprestimos";
+import rotuloStatusEmprestimo from "../utilitarios/rotuloStatusEmprestimo";
 
-const filtros = ["Todos", "Pendente", "Em uso", "Atrasado", "Recusado"];
+const filtros = [
+  { label: "Todos", value: "Todos" },
+  { label: "Em uso", value: "Em uso" },
+  { label: "Atrasado", value: "Atrasado" },
+];
 
 function statusEmprestimo(loan, agora) {
   if (["Pendente", "Atrasado", "Recusado"].includes(loan.status)) {
@@ -51,6 +56,7 @@ export default function AdminPage({
 }) {
   const [query, setQuery] = useState("");
   const [filtroAtivo, setFiltroAtivo] = useState("Todos");
+  const [abaGestao, setAbaGestao] = useState("acervo");
   const [aparelhoEmEdicao, setAparelhoEmEdicao] = useState(null);
   const [erroAparelho, setErroAparelho] = useState("");
   const [erroAdministracao, setErroAdministracao] = useState("");
@@ -94,6 +100,7 @@ export default function AdminPage({
         loan.room,
         loan.department,
         status,
+        rotuloStatusEmprestimo(status),
       ]
         .filter(Boolean)
         .join(" ")
@@ -117,7 +124,7 @@ export default function AdminPage({
     0,
   );
   const atrasados = loans.filter((loan) => statusEmprestimo(loan, agora) === "Atrasado").length;
-  const pendentes = loans.filter((loan) => loan.status === "Pendente").length;
+  const agendados = loans.filter((loan) => loan.status === "Pendente").length;
   const emprestimosAtivos = loans.filter((loan) =>
     ["Em uso", "Atrasado"].includes(loan.status),
   ).length;
@@ -213,11 +220,10 @@ export default function AdminPage({
     <div className="page-content admin-page">
       <section className="admin-welcome">
         <div>
-          <span className="eyebrow">PAINEL DE CONTROLE</span>
-          <h2>Visão geral dos empréstimos</h2>
+          <span className="eyebrow">HOME DO GESTOR</span>
+          <h2>Central de gestão</h2>
           <p>
-            Acompanhe a utilização do acervo e identifique o que precisa de
-            atenção.
+            Acompanhe empréstimos, acervo, salas e contas em um único painel.
           </p>
         </div>
         <button
@@ -225,7 +231,7 @@ export default function AdminPage({
           type="button"
           onClick={() => exportarEmprestimos(emprestimosFiltrados.map((loan) => ({
             ...loan,
-            status: statusEmprestimo(loan, agora),
+            status: rotuloStatusEmprestimo(statusEmprestimo(loan, agora)),
           })))}
         >
           <Icon>⇩</Icon> Exportar empréstimos
@@ -236,7 +242,7 @@ export default function AdminPage({
         <StatCard
           label="Empréstimos ativos"
           value={emprestimosAtivos}
-          detail={`${pendentes} solicitação(ões) antiga(s) pendente(s)`}
+          detail={`${agendados} empréstimo(s) agendado(s)`}
           icon="↔"
           tone="blue"
         />
@@ -263,12 +269,12 @@ export default function AdminPage({
         />
       </section>
 
-      {(pendentes > 0 || atrasados > 0) && (
+      {(agendados > 0 || atrasados > 0) && (
         <section className="admin-alerts" aria-label="Ações que precisam de atenção">
           <div className="section-heading">
             <div>
               <h2>Precisa de atenção</h2>
-              <p>Solicitações antigas aguardando decisão e devoluções em atraso.</p>
+              <p>Empréstimos agendados aguardando aprovação e devoluções em atraso.</p>
             </div>
           </div>
           <div className="admin-alert-list">
@@ -281,7 +287,7 @@ export default function AdminPage({
                   </span>
                   <div className="admin-alert-copy">
                     <strong>{loan.device} · {loan.responsible || "Responsável não informado"}</strong>
-                    <span>{statusEmprestimo(loan, agora) === "Pendente" ? "Aguardando aprovação" : "Devolução atrasada"} · {loan.room}</span>
+                    <span>{statusEmprestimo(loan, agora) === "Pendente" ? "Agendado · aguardando aprovação" : "Devolução atrasada"} · {loan.room}</span>
                   </div>
                   {statusEmprestimo(loan, agora) === "Pendente" ? (
                     <div className="admin-alert-actions">
@@ -340,16 +346,16 @@ export default function AdminPage({
         </div>
 
         <div className="filters admin-filters" aria-label="Filtrar por status">
-          {filtros.map((filtro) => (
+          {filtros.map(({ label, value }) => (
             <button
-              key={filtro}
+              key={value}
               type="button"
-              className={filtroAtivo === filtro ? "selected" : ""}
-              aria-pressed={filtroAtivo === filtro}
-              onClick={() => setFiltroAtivo(filtro)}
+              className={filtroAtivo === value ? "selected" : ""}
+              aria-pressed={filtroAtivo === value}
+              onClick={() => setFiltroAtivo(value)}
             >
-              {filtro}
-              {filtro === "Atrasado" && atrasados > 0 && (
+              {label}
+              {value === "Atrasado" && atrasados > 0 && (
                 <span className="admin-filter-count">{atrasados}</span>
               )}
             </button>
@@ -410,7 +416,7 @@ export default function AdminPage({
                             ? "orange"
                             : "blue"
                       )}>
-                        {statusEmprestimo(loan, agora)}
+                        {rotuloStatusEmprestimo(statusEmprestimo(loan, agora))}
                       </Badge>
                     </td>
                     <td>
@@ -442,6 +448,25 @@ export default function AdminPage({
         </div>
       </section>
 
+      <nav className="filters admin-management-tabs" aria-label="Seções de gerenciamento">
+        {[
+          ["acervo", "Gerenciar acervo"],
+          ["salas", "Gerenciar salas de aula"],
+          ["contas", "Gerenciar contas"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={abaGestao === id ? "selected" : ""}
+            aria-pressed={abaGestao === id}
+            onClick={() => setAbaGestao(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {abaGestao === "acervo" && (
       <section className="admin-inventory">
         <div className="section-heading">
           <div>
@@ -529,6 +554,12 @@ export default function AdminPage({
                 setFormAparelho({ ...formAparelho, location: event.target.value })
               }
             >
+              {aparelhoEmEdicao &&
+                !["LMT", "Maker"].includes(aparelhoEmEdicao.location) && (
+                  <option value={aparelhoEmEdicao.location}>
+                    {aparelhoEmEdicao.location} · local legado não classificado
+                  </option>
+                )}
               <option value="LMT">LMT</option>
               <option value="Maker">Maker</option>
             </select>
@@ -609,67 +640,9 @@ export default function AdminPage({
           </table>
         </div>
       </section>
+      )}
 
-      <section className="admin-history">
-        <div className="section-heading">
-          <div>
-            <h2>Histórico de devoluções</h2>
-            <p>{history.length} registro(s) concluído(s)</p>
-          </div>
-        </div>
-        <div className="table-wrap admin-table-wrap">
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>Aparelho</th>
-                <th>Responsável</th>
-                <th>Quantidade</th>
-                <th>Local</th>
-                <th>Retirada</th>
-                <th>Devolução</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.length === 0 ? (
-                <tr><td colSpan="7" className="empty-cell">Nenhuma devolução registrada.</td></tr>
-              ) : history.map((item, index) => (
-                <tr key={item.id || `${item.device}-${item.date}-${index}`}>
-                  <td>{item.device}</td>
-                  <td>{item.responsible || "Não informado"}</td>
-                  <td>{item.qty}</td>
-                  <td>{item.room}</td>
-                  <td>{item.date}</td>
-                  <td>{item.returned}</td>
-                  <td><Badge tone="green">{item.status || "Devolvido"}</Badge></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="admin-history">
-        <div className="section-heading">
-          <div>
-            <h2>Atividades administrativas</h2>
-            <p>Registro das ações realizadas nesta sessão.</p>
-          </div>
-        </div>
-        {activities.length === 0 ? (
-          <p className="admin-empty-activity">As próximas ações administrativas aparecerão aqui.</p>
-        ) : (
-          <ul className="admin-activity-list">
-            {activities.map((activity) => (
-              <li key={activity.id}>
-                <div><strong>{activity.mensagem}</strong><span>{activity.responsavel}</span></div>
-                <time>{activity.data}</time>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
+      {abaGestao === "salas" && (
       <section className="admin-inventory">
         <div className="section-heading">
           <div>
@@ -780,7 +753,9 @@ export default function AdminPage({
           </table>
         </div>
       </section>
+      )}
 
+      {abaGestao === "contas" && (
       <section className="admin-inventory">
         <div className="section-heading">
           <div>
@@ -927,6 +902,67 @@ export default function AdminPage({
             </tbody>
           </table>
         </div>
+      </section>
+      )}
+
+      <section className="admin-history">
+        <div className="section-heading">
+          <div>
+            <h2>Histórico de devoluções</h2>
+            <p>{history.length} registro(s) concluído(s)</p>
+          </div>
+        </div>
+        <div className="table-wrap admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Aparelho</th>
+                <th>Responsável</th>
+                <th>Quantidade</th>
+                <th>Local</th>
+                <th>Retirada</th>
+                <th>Devolução</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.length === 0 ? (
+                <tr><td colSpan="7" className="empty-cell">Nenhuma devolução registrada.</td></tr>
+              ) : history.map((item, index) => (
+                <tr key={item.id || `${item.device}-${item.date}-${index}`}>
+                  <td>{item.device}</td>
+                  <td>{item.responsible || "Não informado"}</td>
+                  <td>{item.qty}</td>
+                  <td>{item.room}</td>
+                  <td>{item.date}</td>
+                  <td>{item.returned}</td>
+                  <td><Badge tone="green">{item.status || "Devolvido"}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="admin-history">
+        <div className="section-heading">
+          <div>
+            <h2>Atividades administrativas</h2>
+            <p>Registro das ações realizadas nesta sessão.</p>
+          </div>
+        </div>
+        {activities.length === 0 ? (
+          <p className="admin-empty-activity">As próximas ações administrativas aparecerão aqui.</p>
+        ) : (
+          <ul className="admin-activity-list">
+            {activities.map((activity) => (
+              <li key={activity.id}>
+                <div><strong>{activity.mensagem}</strong><span>{activity.responsavel}</span></div>
+                <time>{activity.data}</time>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {erroAdministracao && (

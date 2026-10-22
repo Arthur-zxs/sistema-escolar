@@ -71,7 +71,7 @@ database.exec(`
     expires_at TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS email_verifications (
+  CREATE TABLE IF NOT EXISTS password_resets (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     token_hash TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -113,6 +113,8 @@ if (!userColumns.some((column) => column.name === "avatar")) {
 if (!userColumns.some((column) => column.name === "email_verified")) {
   database.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1");
 }
+database.prepare("UPDATE users SET email_verified = 1 WHERE email_verified <> 1").run();
+database.exec("DROP TABLE IF EXISTS email_verifications");
 if (!userColumns.some((column) => column.name === "password_updated_at")) {
   database.exec("ALTER TABLE users ADD COLUMN password_updated_at TEXT");
 }
@@ -161,10 +163,19 @@ database.prepare(`
   UPDATE devices
   SET location = CASE
     WHEN lower(location) LIKE '%lmt%' THEN 'LMT'
-    ELSE 'Maker'
+    WHEN lower(location) LIKE '%maker%' THEN 'Maker'
+    ELSE location
   END
   WHERE location NOT IN ('LMT', 'Maker')
 `).run();
+const unclassifiedDevices = database.prepare(
+  "SELECT COUNT(*) AS count FROM devices WHERE location NOT IN ('LMT', 'Maker')",
+).get().count;
+if (unclassifiedDevices > 0) {
+  console.warn(
+    `${unclassifiedDevices} device(s) still have an unrecognized acervo location. Update them to LMT or Maker in Administration.`,
+  );
+}
 
 const adminRoles = new Set([
   "Diretoria",

@@ -37,7 +37,6 @@ export const salas = Array.from({ length: 24 }, (_value, index) => {
 export const itensNavegacao = [
   ['home', 'Home', '⌂'], ['devices', 'Aparelhos', '▣'], ['loans', 'Empréstimos', '↔'],
   ['map', 'Mapa da escola', '⌆'], ['history', 'Histórico', '◷'], ['profile', 'Meu perfil', '♙'],
-  ['admin', 'Administração', '▤'],
 ]
 
 export const funcoesComAcessoAdmin = [
@@ -53,5 +52,5 @@ export const dadosPaginas = {
   map: ['Mapa da escola', 'Encontre salas e aparelhos em utilização.'],
   history: ['Histórico', 'Consulte suas movimentações anteriores.'],
   profile: ['Meu perfil', 'Seus dados e empréstimos em um só lugar.'],
-  admin: ['Administração', 'Visão geral do acervo e dos empréstimos da escola.'],
+  admin: ['Home', 'Painel integrado do acervo, empréstimos e gestão da escola.'],
 }

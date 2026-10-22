@@ -1,7 +1,7 @@
 import { useState } from "react";
 import imagemLmt from "../../img/lmt.jpg";
 
-export default function Cadastro({ onCadastrar, onVoltarLogin, onVerificarEmail }) {
+export default function Cadastro({ onCadastrar, onVoltarLogin }) {
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [funcao, setFuncao] = useState("");
@@ -41,21 +41,21 @@ export default function Cadastro({ onCadastrar, onVoltarLogin, onVerificarEmail 
           className="imagem-login"
         />
       </div>
-      <section className="login-panel">
+      <section className="login-panel cadastro-panel">
         <div className="brand login-brand">
           <div className="brand-mark">+</div>
           <div>
-            <strong>Sesi</strong>
-            <span>Cerquilho</span>
+            <strong>Agenda</strong>
+            <span>LMT</span>
           </div>
         </div>
 
-        <div className="login-copy">
+        <div className="login-copy cadastro-copy">
           <span className="eyebrow">NOVO CADASTRO</span>
           <h1>
             Criar conta<span>.</span>
           </h1>
-          <p>Confirme seu e-mail institucional para ativar a conta. Funções administrativas exigem aprovação.</p>
+          <p>Crie sua conta com o e-mail institucional. Funções administrativas exigem aprovação.</p>
         </div>
 
         {erro && (
@@ -64,7 +64,7 @@ export default function Cadastro({ onCadastrar, onVoltarLogin, onVerificarEmail 
           </p>
         )}
 
-        <form onSubmit={handleSubmit}>
+        <form className="cadastro-form" onSubmit={handleSubmit}>
           <label>
             Nome Completo
             <input
@@ -143,10 +143,6 @@ export default function Cadastro({ onCadastrar, onVoltarLogin, onVerificarEmail 
             Cadastrar <span>→</span>
           </button>
         </form>
-
-        <button className="create-account" type="button" onClick={onVerificarEmail}>
-          Já se cadastrou? <strong>Confirmar e-mail</strong>
-        </button>
 
         <button
           className="create-account"

@@ -1,5 +1,6 @@
 import React from 'react';
 import Badge from "../comuns/Badge";
+import rotuloStatusEmprestimo from "../../utilitarios/rotuloStatusEmprestimo";
 
 export default function LoanTable({ rows, compact = false, onReturn, canReturn }) {
   return (
@@ -46,7 +47,9 @@ export default function LoanTable({ rows, compact = false, onReturn, canReturn }
                 <td>{row.date}</td>
                 <td>{row.returnTime || '—'}</td>
                 <td>
-                  <Badge tone={row.statusTone || "green"}>{row.status}</Badge>
+                  <Badge tone={row.statusTone || "green"}>
+                    {rotuloStatusEmprestimo(row.status)}
+                  </Badge>
                 </td>
                 {onReturn && (
                   <td>

@@ -1,9 +1,10 @@
 import Badge from "../comuns/Badge";
 
 export default function DeviceCard({ device, onRequest }) {
-  const unavailable = device.available === 0;
+  const needsLocation = !["LMT", "Maker"].includes(device.location);
+  const unavailable = device.available === 0 || needsLocation;
   const statusTone = unavailable
-    ? "red"
+    ? needsLocation ? "orange" : "red"
     : device.available < 4
       ? "orange"
       : "green";
@@ -21,7 +22,7 @@ export default function DeviceCard({ device, onRequest }) {
             <p>{device.brand} · Local: <strong>{device.location}</strong></p>
           </div>
           <Badge tone={statusTone}>
-            {unavailable ? "Indisponível" : "Disponível"}
+            {needsLocation ? "Local não classificado" : unavailable ? "Indisponível" : "Disponível"}
           </Badge>
         </div>
         <div className="device-metrics">
@@ -43,7 +44,11 @@ export default function DeviceCard({ device, onRequest }) {
           disabled={unavailable}
           onClick={() => onRequest(device)}
         >
-          {unavailable ? "Sem disponibilidade" : "Registrar empréstimo"}
+          {needsLocation
+            ? "Aguardando classificação do acervo"
+            : unavailable
+              ? "Sem disponibilidade"
+              : "Registrar empréstimo"}
           <span>→</span>
         </button>
       </div>

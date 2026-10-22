@@ -37,7 +37,7 @@ export default function HistoryPage({ history, canClearHistory = false, onClearH
             className="outline-button"
             type="button"
             disabled={history.length === 0}
-            onClick={() => exportarEmprestimos(history, "historico-emprestimos-sesi.csv")}
+            onClick={() => exportarEmprestimos(history, "historico-emprestimos-agenda-lmt.csv")}
           >
             <Icon>⇩</Icon> Exportar lista
           </button>

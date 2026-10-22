@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Badge from '../componentes/comuns/Badge'
+import rotuloStatusEmprestimo from '../utilitarios/rotuloStatusEmprestimo'
 
 async function prepararFoto(file) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
@@ -181,7 +182,9 @@ export default function ProfilePage({ loans, funcionario, onSave }) {
               <div className="profile-loan" key={loan.id}>
                 <span className="mini-device">{loan.device.includes('Galaxy') ? '▯' : '▣'}</span>
                 <div><strong>{loan.device}</strong><small>{loan.qty} unidade(s) · {loan.room}</small></div>
-                <Badge tone={loan.statusTone}>{loan.status}</Badge>
+                <Badge tone={loan.statusTone}>
+                  {rotuloStatusEmprestimo(loan.status)}
+                </Badge>
               </div>
             ))}
           </div>

@@ -7,7 +7,6 @@ import Header from "./componentes/estrutura/Header";
 import Login from "./componentes/autenticacao/Login";
 import Cadastro from "./componentes/autenticacao/Cadastro";
 import AlterarSenha from "./componentes/autenticacao/AlterarSenha";
-import VerificarEmail from "./componentes/autenticacao/VerificarEmail";
 import LoanModal from "./componentes/emprestimos/LoanModal";
 import ReturnModal from "./componentes/emprestimos/ReturnModal";
 
@@ -47,8 +46,6 @@ export default function App() {
   const [telaDeAcesso, setTelaDeAcesso] = useState("login");
   const [mensagemLogin, setMensagemLogin] = useState("");
   const [erroLogin, setErroLogin] = useState("");
-  const [emailPendente, setEmailPendente] = useState("");
-  const [codigoDevPendente, setCodigoDevPendente] = useState("");
   const [rmParaAtualizarSenha, setRmParaAtualizarSenha] = useState("");
   const [avisoAcesso, setAvisoAcesso] = useState("");
   const [erroOperacao, setErroOperacao] = useState("");
@@ -130,7 +127,7 @@ export default function App() {
     }
     setAvisoAcesso("");
     setErroOperacao("");
-    setPaginaAtiva(pagina);
+    setPaginaAtiva(pagina === "admin" ? "home" : pagina);
     setMenuMobileAberto(false);
   }
 
@@ -140,37 +137,25 @@ export default function App() {
       body: dadosCadastro,
     });
     setErroLogin("");
-    setEmailPendente(result.email);
-    setCodigoDevPendente(result.verificationCode || "");
-    setTelaDeAcesso("verificar-email");
-    return result;
-  }
-
-  async function verificarEmail(email, code) {
-    const result = await api("/auth/verify-email", {
-      method: "POST",
-      body: { email, code },
-    });
     setMensagemLogin(result.message);
-    setErroLogin("");
     setTelaDeAcesso("login");
-  }
-
-  async function reenviarCodigo(email) {
-    return api("/auth/resend-verification", {
-      method: "POST",
-      body: { email },
-    });
   }
 
   async function alterarSenhaAntesDoLogin(senhas) {
-    await api("/auth/change-password", {
+    await api("/auth/password-reset/confirm", {
       method: "POST",
       body: senhas,
     });
-    setMensagemLogin("Senha alterada. Entre com sua nova senha.");
+    setMensagemLogin("Senha redefinida. Entre com sua nova senha.");
     setErroLogin("");
     setTelaDeAcesso("login");
+  }
+
+  async function solicitarRecuperacaoSenha(rm) {
+    return api("/auth/password-reset/request", {
+      method: "POST",
+      body: { rm },
+    });
   }
 
   async function fazerLogin(credenciais) {
@@ -256,14 +241,7 @@ export default function App() {
   }
 
   async function salvarAparelho(aparelhoAtualizado) {
-    const { id, ...body } = aparelhoAtualizado;
-    if (id) {
-      await api(`/admin/devices/${id}`, { method: "PUT", body });
-    } else {
-      await api("/admin/devices", { method: "POST", body });
-    }
-    await recarregar();
-    return true;
+    return salvarRecurso("/admin/devices", aparelhoAtualizado);
   }
 
   async function excluirAparelho(aparelho) {
@@ -294,13 +272,17 @@ export default function App() {
   }
 
   async function salvarSala(sala) {
-    const { id, ...body } = sala;
-    if (id) {
-      await api(`/admin/rooms/${id}`, { method: "PUT", body });
-    } else {
-      await api("/admin/rooms", { method: "POST", body });
-    }
+    return salvarRecurso("/admin/rooms", sala);
+  }
+
+  async function salvarRecurso(basePath, recurso) {
+    const { id, ...body } = recurso;
+    await api(id ? `${basePath}/${id}` : basePath, {
+      method: id ? "PUT" : "POST",
+      body,
+    });
     await recarregar();
+    return true;
   }
 
   async function excluirSala(sala) {
@@ -344,27 +326,13 @@ export default function App() {
       return (
         <AlterarSenha
           initialRm={rmParaAtualizarSenha}
+          onRequestCode={solicitarRecuperacaoSenha}
           onSubmit={alterarSenhaAntesDoLogin}
           onBack={() => {
             setErroLogin("");
             setTelaDeAcesso("login");
           }}
           erro={erroLogin}
-        />
-      );
-    }
-
-    if (telaDeAcesso === "verificar-email") {
-      return (
-        <VerificarEmail
-          initialEmail={emailPendente}
-          initialCode={codigoDevPendente}
-          onVerify={verificarEmail}
-          onResend={reenviarCodigo}
-          onBack={() => {
-            setErroLogin("");
-            setTelaDeAcesso("login");
-          }}
         />
       );
     }
@@ -377,7 +345,6 @@ export default function App() {
             setTelaDeAcesso("login");
           }}
           onCadastrar={cadastrarFuncionario}
-          onVerificarEmail={() => setTelaDeAcesso("verificar-email")}
         />
       );
     }
@@ -397,19 +364,16 @@ export default function App() {
           setErroLogin("");
           setTelaDeAcesso("cadastro");
         }}
-        onVerifyEmail={() => {
-          setMensagemLogin("");
-          setErroLogin("");
-          setTelaDeAcesso("verificar-email");
-        }}
         mensagem={mensagemLogin}
         erro={erroLogin || erroOperacao}
       />
     );
   }
 
-  const PaginaAtual = paginas[paginaAtiva];
-  const [titulo, subtitulo] = dadosPaginas[paginaAtiva];
+  const paginaGestorAtiva = paginaAtiva === "home" && podeAcessarAdmin;
+  const chavePagina = paginaGestorAtiva ? "admin" : paginaAtiva;
+  const PaginaAtual = paginaGestorAtiva ? AdminPage : paginas[paginaAtiva];
+  const [titulo, subtitulo] = dadosPaginas[chavePagina];
   const meusEmprestimos = dados.loans.filter(
     (loan) => loan.ownerRm === funcionario.registro,
   );
@@ -468,14 +432,13 @@ export default function App() {
       onSaveRoom: salvarSala,
       onDeleteRoom: excluirSala,
     },
-  }[paginaAtiva] || {};
+  }[chavePagina] || {};
 
   return (
     <div className={`app-shell ${menuMobileAberto ? "nav-open" : ""}`}>
       <Sidebar
         active={paginaAtiva}
         onNavigate={navegar}
-        canAccessAdmin={podeAcessarAdmin}
         onLogout={sair}
       />
       {menuMobileAberto && (
@@ -514,9 +477,13 @@ export default function App() {
           <PaginaAtual {...propriedadesDaPagina} />
         </main>
         <footer className="footer">
-          © 2024 Sesi Cerquilho - Equipe laboratorio 428
-          <span> · </span>
-          Ambiente acadêmico
+          <div>© 2026 Agenda LMT · Ambiente acadêmico</div>
+          <div className="footer-credits">
+            <strong>Desenvolvimento:</strong> José Arthur, Mateus Felipe Caldana,
+            Kauã Serafim e Matheus Eduardo Costa
+            <span> · </span>
+            <strong>Orientadores:</strong> Ricardo Carione e Andre
+          </div>
         </footer>
       </div>
       {aparelhoSelecionado && (
